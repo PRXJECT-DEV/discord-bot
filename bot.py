@@ -9,23 +9,20 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Guild and Role IDs
 GUILD_ID = 1375574037597650984
 ROLE_ID_HARVESTER = 1375574147064664164
+user_orders = {}
+open_tickets = {}  # user_id -> channel_id
+shop_message_origin = {}  # user_id -> channel_id
 
-user_orders = {}  # user_id -> {"item": "Harvester", "quantity": X}
-
-# ✅ Ready check
 @bot.event
 async def on_ready():
-    print(f"Bot is online as {bot.user}")
+    print(f"✅ Bot online as {bot.user}")
 
-# 🔁 Basic ping command
 @bot.command()
 async def ping(ctx):
     await ctx.send("Pong!")
 
-# 📩 Reaction role setup
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def reactionrolesetup(ctx):
@@ -33,104 +30,102 @@ async def reactionrolesetup(ctx):
     role = guild.get_role(ROLE_ID_HARVESTER)
 
     embed = discord.Embed(
-        title="Choose your roles!",
+        title="🎃 Role Selection",
         description=f"React with 🎃 to get the **{role.name}** role."
     )
-    message = await ctx.send(embed=embed)
-    await message.add_reaction("🎃")
+    msg = await ctx.send(embed=embed)
+    await msg.add_reaction("🎃")
 
-# 🛒 Shop Command (ticket-based)
 @bot.command()
 async def shop(ctx):
     embed = discord.Embed(
         title="🛒 MM2 Item Shop",
-        description="React below to start your order!",
+        description="React below to order:",
         color=discord.Color.green()
     )
     embed.add_field(name="🔪 Harvester", value="`$10 each`", inline=False)
-    embed.set_image(url="https://your-image-url.com/harvester.png")
-    embed.set_footer(text="React with an item to order")
+    embed.set_footer(text="React to start your order")
 
-    message = await ctx.send(embed=embed)
-    await message.add_reaction("🔪")
+    msg = await ctx.send(embed=embed)
+    await msg.add_reaction("🔪")
+    shop_message_origin[ctx.author.id] = ctx.channel.id  # Save where the user clicked
 
-# ✅ Reaction handler (both shop + roles)
 @bot.event
 async def on_raw_reaction_add(payload):
-    if payload.guild_id != GUILD_ID or payload.member.bot:
+    if payload.guild_id != GUILD_ID or payload.user_id == bot.user.id:
         return
 
-    emoji = str(payload.emoji)
     guild = bot.get_guild(payload.guild_id)
-    member = payload.member
+    member = guild.get_member(payload.user_id)
+    emoji = str(payload.emoji)
 
-    # 🎃 Role handling
+    # 🎃 Role assignment
     if emoji == "🎃":
         role = guild.get_role(ROLE_ID_HARVESTER)
-        if member and role:
+        if role not in member.roles:
             await member.add_roles(role)
-            print(f"Added role {role.name} to {member.display_name}")
+            print(f"✅ Added {role.name} to {member.name}")
         return
 
-    # 🔪 Shop handling
+    # 🔪 Shop item reaction
     if emoji == "🔪":
-        existing = discord.utils.get(guild.channels, name=f"order-{member.name}")
-        if existing:
-            await existing.send(f"{member.mention}, you already have an open ticket.")
-            return
+        if member.id in open_tickets:
+            return  # Already has a ticket
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             member: discord.PermissionOverwrite(read_messages=True, send_messages=True),
         }
-
-        channel = await guild.create_text_channel(f"order-{member.name}", overwrites=overwrites)
-
-        await channel.send(
-            f"👋 Hi {member.mention}, you selected **Harvester**!\nHow many would you like to buy?"
-        )
+        ticket_channel = await guild.create_text_channel(f"order-{member.name}", overwrites=overwrites)
+        open_tickets[member.id] = ticket_channel.id
         user_orders[member.id] = {"item": "Harvester", "quantity": 0}
 
-# 🔁 Reaction remove (only for role removal)
-@bot.event
-async def on_raw_reaction_remove(payload):
-    if payload.guild_id != GUILD_ID:
-        return
+        await ticket_channel.send(
+            f"👋 Hi {member.mention}, you selected **Harvester**!\nHow many would you like to buy?"
+        )
 
-    emoji = str(payload.emoji)
-    guild = bot.get_guild(payload.guild_id)
-    member = guild.get_member(payload.user_id)
-
-    if emoji == "🎃":
-        role = guild.get_role(ROLE_ID_HARVESTER)
-        if member and role:
-            await member.remove_roles(role)
-            print(f"Removed role {role.name} from {member.display_name}")
-
-# 📦 Quantity handler
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    if message.channel.name.startswith("order-"):
-        uid = message.author.id
-        if uid in user_orders and user_orders[uid]["quantity"] == 0:
-            try:
-                qty = int(message.content)
-                if qty <= 0:
-                    await message.channel.send("❌ Please enter a valid quantity.")
-                    return
+    uid = message.author.id
+    if message.channel.name.startswith("order-") and uid in user_orders and user_orders[uid]["quantity"] == 0:
+        try:
+            qty = int(message.content)
+            if qty <= 0:
+                await message.channel.send("❌ Quantity must be at least 1.")
+                return
 
-                user_orders[uid]["quantity"] = qty
-                await message.channel.send(
-                    f"✅ Noted: `{qty}x {user_orders[uid]['item']}`.\nUse `!checkout` when ready!"
-                )
-            except ValueError:
-                await message.channel.send("❌ Please enter a number.")
+            user_orders[uid]["quantity"] = qty
+            await message.channel.send(
+                f"✅ Noted: `{qty}x Harvester`. Ticket will close now. Use `!checkout` in this channel."
+            )
+
+            # Save origin channel
+            origin_channel = shop_message_origin.get(uid)
+            if origin_channel:
+                try:
+                    channel = bot.get_channel(origin_channel)
+                    await channel.send(f"📦 {message.author.mention}, your Harvester order for `{qty}` has been noted.")
+                except:
+                    pass
+
+            # Close ticket after short delay
+            await message.channel.send("🔒 Closing this ticket in 3 seconds...")
+            await discord.utils.sleep_until(discord.utils.utcnow() + discord.timedelta(seconds=3))
+
+            # Delete ticket channel
+            ticket_channel = message.channel
+            await ticket_channel.delete()
+
+            # Cleanup
+            del open_tickets[uid]
+
+        except ValueError:
+            await message.channel.send("❌ Please enter a number.")
     await bot.process_commands(message)
 
-# 💰 Checkout command
 @bot.command()
 async def checkout(ctx):
     uid = ctx.author.id
@@ -138,18 +133,27 @@ async def checkout(ctx):
         await ctx.send("❌ No valid order found. Use `!shop` to start.")
         return
 
-    item = user_orders[uid]["item"]
-    qty = user_orders[uid]["quantity"]
-    price_each = 10
-    total = qty * price_each
+    order = user_orders[uid]
+    total = order["quantity"] * 10
 
-    embed = discord.Embed(title="🧾 Order Summary", color=discord.Color.blue())
-    embed.add_field(name="Item", value=item)
-    embed.add_field(name="Quantity", value=str(qty))
-    embed.add_field(name="Total", value=f"${total}")
-    embed.set_footer(text="Pay via PayPal after confirming.")
+    embed = discord.Embed(title="🧾 Order Summary", color=discord.Color.blurple())
+    embed.add_field(name="Item", value=order["item"], inline=True)
+    embed.add_field(name="Quantity", value=str(order["quantity"]), inline=True)
+    embed.add_field(name="Total", value=f"${total}", inline=True)
+    embed.set_footer(text="Use PayPal or message staff to complete payment.")
 
     await ctx.send(embed=embed)
 
-# Run bot
+@bot.event
+async def on_raw_reaction_remove(payload):
+    if payload.guild_id != GUILD_ID:
+        return
+    if str(payload.emoji) == "🎃":
+        guild = bot.get_guild(payload.guild_id)
+        member = guild.get_member(payload.user_id)
+        role = guild.get_role(ROLE_ID_HARVESTER)
+        if member and role:
+            await member.remove_roles(role)
+            print(f"❌ Removed {role.name} from {member.name}")
+
 bot.run(os.getenv("BOT_TOKEN"))
