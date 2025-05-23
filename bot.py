@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 from discord.ui import Button, View
+import asyncio
 import os
 
 intents = discord.Intents.default()
@@ -10,63 +11,46 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# Guild and Role IDs
 GUILD_ID = 1375574037597650984
 ROLE_ID_HARVESTER = 1375574147064664164
 
-user_orders = {}  # Tracks current user orders
+user_orders = {}  # Track ongoing orders
 
 
-class ShopView(View):
+# 🎮 UI View
+class HarvesterView(View):
     def __init__(self):
         super().__init__(timeout=None)
-        self.add_item(Button(label="🎃 Get Harvester Role", custom_id="get_role"))
-        self.add_item(Button(label="🔪 Buy Harvester", custom_id="buy_item"))
+        self.add_item(HarvesterRoleButton())
+        self.add_item(BuyHarvesterButton())
 
 
-@bot.event
-async def on_ready():
-    print(f"Bot is online as {bot.user}")
-    bot.add_view(ShopView())  # Register persistent view
-    print("Persistent view loaded.")
+class HarvesterRoleButton(Button):
+    def __init__(self):
+        super().__init__(label="🎃 Get Harvester Role", style=discord.ButtonStyle.green)
 
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def shop(ctx):
-    """Sends the embed with buttons"""
-    embed = discord.Embed(
-        title="🎃 Harvester Access Panel",
-        description="Click a button below to get the role or buy an item.",
-        color=discord.Color.orange()
-    )
-    embed.add_field(name="🔪 Harvester", value="`$10 each`")
-    embed.set_footer(text="Buttons powered by Discord UI")
-
-    await ctx.send(embed=embed, view=ShopView())
-
-
-@bot.event
-async def on_interaction(interaction: discord.Interaction):
-    if not interaction.guild or interaction.user.bot:
-        return
-
-    guild = interaction.guild
-    user = interaction.user
-    custom_id = interaction.data.get("custom_id")
-
-    if custom_id == "get_role":
-        role = guild.get_role(ROLE_ID_HARVESTER)
-        if role in user.roles:
+    async def callback(self, interaction: discord.Interaction):
+        role = interaction.guild.get_role(ROLE_ID_HARVESTER)
+        if role in interaction.user.roles:
             await interaction.response.send_message("❌ You already have the role!", ephemeral=True)
         else:
-            await user.add_roles(role)
-            await interaction.response.send_message("✅ Role granted!", ephemeral=True)
+            await interaction.user.add_roles(role)
+            await interaction.response.send_message("✅ Role added!", ephemeral=True)
 
-    elif custom_id == "buy_item":
-        # Avoid dupes
+
+class BuyHarvesterButton(Button):
+    def __init__(self):
+        super().__init__(label="🔪 Buy Harvester", style=discord.ButtonStyle.blurple)
+
+    async def callback(self, interaction: discord.Interaction):
+        user = interaction.user
+        guild = interaction.guild
+
+        # Prevent multiple tickets
         existing = discord.utils.get(guild.channels, name=f"order-{user.name.lower()}")
         if existing:
-            await interaction.response.send_message("❌ You already have a ticket open!", ephemeral=True)
+            await interaction.response.send_message("❌ You already have an open ticket!", ephemeral=True)
             return
 
         overwrites = {
@@ -74,42 +58,65 @@ async def on_interaction(interaction: discord.Interaction):
             user: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
 
-        ticket_channel = await guild.create_text_channel(f"order-{user.name}", overwrites=overwrites)
-        await ticket_channel.send(f"👋 {user.mention}, how many **Harvester** would you like to buy?")
+        ticket = await guild.create_text_channel(f"order-{user.name}", overwrites=overwrites)
+        await ticket.send(f"👋 Hello {user.mention}, how many **Harvester** would you like to buy?")
         user_orders[user.id] = {"item": "Harvester", "quantity": 0}
+
         await interaction.response.send_message("✅ Ticket created!", ephemeral=True)
 
 
+# ✅ Bot startup
+@bot.event
+async def on_ready():
+    print(f"✅ Bot is online as {bot.user}")
+    bot.add_view(HarvesterView())  # Register persistent buttons
+
+
+# 🛍️ Shop command
+@bot.command()
+async def shop(ctx):
+    embed = discord.Embed(
+        title="🎃 Harvester Panel",
+        description="Choose an option below:",
+        color=discord.Color.orange()
+    )
+    embed.add_field(name="🔪 Harvester", value="$10 each")
+    embed.set_footer(text="Click a button to continue")
+
+    # Send one embed only
+    await ctx.send(embed=embed, view=HarvesterView())
+
+
+# 📥 Handle ticket number input
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
     if message.channel.name.startswith("order-"):
-        uid = message.author.id
-        if uid in user_orders and user_orders[uid]["quantity"] == 0:
+        user_id = message.author.id
+        if user_id in user_orders and user_orders[user_id]["quantity"] == 0:
             try:
                 qty = int(message.content)
                 if qty <= 0:
-                    await message.channel.send("❌ Please enter a valid quantity.")
+                    await message.channel.send("❌ Enter a valid number.")
                     return
 
-                user_orders[uid]["quantity"] = qty
+                user_orders[user_id]["quantity"] = qty
                 total = qty * 10
+
                 await message.channel.send(
-                    f"✅ Order placed for `{qty}x Harvester`.\nTotal: `${total}`\nThank you!"
+                    f"✅ Order confirmed: `{qty}x Harvester` for `${total}`.\nThanks!"
                 )
+                await message.channel.send("⏳ Closing this ticket in **10 seconds**...")
 
-                # Clean up
-                del user_orders[uid]
-                await message.channel.send("⏳ Closing ticket in 5 seconds...")
-                await discord.utils.sleep_until(discord.utils.utcnow() + discord.utils.timedelta(seconds=5))
+                await asyncio.sleep(10)
                 await message.channel.delete()
-
+                del user_orders[user_id]
             except ValueError:
                 await message.channel.send("❌ Please enter a number.")
-
     await bot.process_commands(message)
 
 
+# 🔐 Run the bot
 bot.run(os.getenv("BOT_TOKEN"))
