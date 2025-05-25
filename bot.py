@@ -1,3 +1,4 @@
+import os
 import discord
 from discord.ext import commands
 from discord.ui import Button, View
@@ -19,6 +20,9 @@ class ShopView(View):
     def __init__(self, item_name):
         super().__init__(timeout=None)
         self.item_name = item_name
+        self.add_item(AddToCartButton(item_name))
+        self.add_item(RemoveFromCartButton(item_name))
+        self.add_item(CartCountButton(0))  # Will update on interaction
 
     async def update_cart_buttons(self, interaction):
         user_id = interaction.user.id
@@ -155,4 +159,5 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user}")
 
 
+# Get your token from environment (e.g., Render)
 bot.run(os.getenv("BOT_TOKEN"))
