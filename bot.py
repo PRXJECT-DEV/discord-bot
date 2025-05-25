@@ -2,6 +2,21 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import Button, View
+import os
+
+# At the top of your file, make sure this is present
+from discord.ext import commands
+
+# Your bot setup
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# At the very bottom of the file
+if __name__ == "__main__":
+    token = os.environ.get("BOT_TOKEN")
+    if not token:
+        raise ValueError("BOT_TOKEN environment variable not found.")
+    bot.run(token)
 
 intents = discord.Intents.default()
 intents.message_content = True
