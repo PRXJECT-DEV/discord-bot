@@ -33,7 +33,7 @@ class ShopView(View):
 
 class AddToCartButton(Button):
     def __init__(self, item_name, user_id):
-        super().__init__(label="🛒 Add to Cart", style=discord.ButtonStyle.success)
+        super().__init__(label="ð Add to cart", style=discord.ButtonStyle.success)
         self.item_name = item_name
         self.user_id = user_id
         self.lock = asyncio.Lock()
@@ -42,12 +42,12 @@ class AddToCartButton(Button):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("This is not your shop message.", ephemeral=True)
 
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         async with self.lock:
             cart = user_carts.setdefault(self.user_id, {})
             item = shop_items.get(self.item_name)
             if not item:
-                return await interaction.followup.send("⚠️ Item not found.", ephemeral=True)
+                return await interaction.followup.send("Item not found.", ephemeral=True)
 
             current_qty = cart.get(self.item_name, 0)
             if current_qty + 1 > item["stock"]:
@@ -55,11 +55,11 @@ class AddToCartButton(Button):
             else:
                 cart[self.item_name] = current_qty + 1
 
-            await update_shop_message(item, interaction)
+            await update_shop_message(self.item_name, item, interaction)
 
 class RemoveFromCartButton(Button):
     def __init__(self, item_name, user_id):
-        super().__init__(label="❌ Remove from Cart", style=discord.ButtonStyle.danger)
+        super().__init__(label="â Remove from cart", style=discord.ButtonStyle.danger)
         self.item_name = item_name
         self.user_id = user_id
         self.lock = asyncio.Lock()
@@ -68,7 +68,7 @@ class RemoveFromCartButton(Button):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("This is not your shop message.", ephemeral=True)
 
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         async with self.lock:
             cart = user_carts.setdefault(self.user_id, {})
             current_qty = cart.get(self.item_name, 0)
@@ -79,7 +79,7 @@ class RemoveFromCartButton(Button):
 
             item = shop_items.get(self.item_name)
             if item:
-                await update_shop_message(item, interaction)
+                await update_shop_message(self.item_name, item, interaction)
 
 class CartCountButton(Button):
     def __init__(self, quantity):
@@ -87,7 +87,7 @@ class CartCountButton(Button):
 
 class CheckoutButton(Button):
     def __init__(self):
-        super().__init__(label="✅ Click Here To Checkout", style=discord.ButtonStyle.success)
+        super().__init__(label="â Click Here To Checkout", style=discord.ButtonStyle.success)
         self.lock = asyncio.Lock()
 
     async def callback(self, interaction: discord.Interaction):
@@ -98,12 +98,12 @@ class CheckoutButton(Button):
 
             category = get(guild.categories, name="Tickets")
             if category is None:
-                return await interaction.followup.send("⚠️ 'Tickets' category not found on this server.", ephemeral=True)
+                return await interaction.followup.send("â ï¸ 'Tickets' category not found on this server.", ephemeral=True)
 
             cart = user_carts.get(user.id, {})
             filtered_cart = {k: v for k, v in cart.items() if v > 0}
             if not filtered_cart:
-                return await interaction.followup.send("🛒 Your cart is empty!", ephemeral=True)
+                return await interaction.followup.send("ð Your cart is empty!", ephemeral=True)
 
             overwrites = {
                 guild.default_role: discord.PermissionOverwrite(view_channel=False),
@@ -125,11 +125,13 @@ class CheckoutButton(Button):
                 if item:
                     cost = item["price"] * qty
                     total += cost
-                    desc += f"**{item_name}** — x{qty} (${item['price']} each) = `${cost}`\n"
+                    desc += f"**{item_name}** â x{qty} ({item['price']}$ each) = `{cost}$`
+"
 
             embed = discord.Embed(
-                title=f"🛒 Order from {user.display_name}",
-                description=desc + f"\n**Total:** `${total}`",
+                title=f"ð Order from {user.display_name}",
+                description=desc + f"
+**Total:** `{total}$`",
                 color=discord.Color.green()
             )
 
@@ -138,41 +140,42 @@ class CheckoutButton(Button):
             view.add_item(CancelCheckoutButton())
 
             await channel.send(content=f"{user.mention} <@{guild.owner_id}>", embed=embed, view=view)
-            await interaction.followup.send(f"✅ Checkout ticket created! Check {channel.mention}", ephemeral=True)
+            await interaction.followup.send(f"â Checkout ticket created! Check {channel.mention}", ephemeral=True)
 
 class ContinueCheckoutButton(Button):
     def __init__(self):
-        super().__init__(label="✅ Continue", style=discord.ButtonStyle.success)
+        super().__init__(label="â Continue", style=discord.ButtonStyle.success)
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
         msg = await interaction.channel.history(limit=10).find(lambda m: m.author == interaction.client.user and m.components)
         if msg:
-            await msg.edit(content="✅ Thank you! Please wait shortly for an admin to look at your request.", view=None)
+            await msg.edit(content="â Thank you! Please wait shortly for an admin to look at your request.", view=None)
 
 class CancelCheckoutButton(Button):
     def __init__(self):
-        super().__init__(label="🔙 Back", style=discord.ButtonStyle.secondary)
+        super().__init__(label="ð Back", style=discord.ButtonStyle.secondary)
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_message("🕒 Canceling and deleting ticket in 5 seconds...", ephemeral=True)
+        await interaction.response.send_message("ð Canceling and deleting ticket in 5 seconds...", ephemeral=True)
         await asyncio.sleep(5)
         await interaction.channel.delete()
 
-async def update_shop_message(item, interaction):
+async def update_shop_message(item_name, item, interaction):
     try:
         channel = bot.get_channel(item["channel_id"])
         msg = await channel.fetch_message(item["message_id"])
 
         embed = discord.Embed(
-            title=interaction.message.embeds[0].title,
-            description=f"💰 Price: ${item['price']}\n📦 Stock: {item['stock']}",
+            title=item_name,
+            description=f"Price: {item['price']}$",
             color=discord.Color.orange()
         )
         if item['image'].lower() != "none":
             embed.set_image(url=item['image'])
+        embed.add_field(name="â", value=f"In stock: {item['stock']}", inline=False)
 
-        view = ShopView(item_name=item["message_id"], user_id=interaction.user.id)
+        view = ShopView(item_name=item_name, user_id=interaction.user.id)
         await msg.edit(embed=embed, view=view)
     except Exception as e:
         print(f"[Update Error] {e}")
@@ -191,17 +194,13 @@ async def setup(ctx):
             pass
 
     embed = discord.Embed(
-        title="🛠️ Shop Bot Setup Guide",
+        title="ð ï¸ Shop Bot Setup Guide",
         description=(
             "**Commands:**\n"
             "`!add <name> <image or none> <price> <stock>`\n"
             "`!remove <name>`\n"
             "`!stock <name> <amount>`\n"
-            "`!setcheckout`\n\n"
-            "➡️ Use `!add` to create a new shop item with a name, image, price, and stock.\n"
-            "➡️ Use `!remove` to delete an item.\n"
-            "➡️ Use `!stock` to update how many of the item are available.\n"
-            "➡️ Use `!setcheckout` to create the checkout message."
+            "`!setcheckout`"
         ),
         color=discord.Color.blue()
     )
@@ -222,7 +221,7 @@ async def setcheckout(ctx):
             pass
 
     embed = discord.Embed(
-        title="🛒 Ready to Checkout?",
+        title="ð Ready to Checkout?",
         description="Click the button below to open a private checkout ticket.",
         color=discord.Color.green()
     )
@@ -232,19 +231,20 @@ async def setcheckout(ctx):
     checkout_msg_id = msg.id
 
 @bot.command(name="add")
-async def add(ctx, name: str, image: str, price: int, stock: int):
+async def add(ctx, name: str, image: str, price: float, stock: int):
     await ctx.message.delete()
 
     if name in shop_items:
-        return await ctx.send("❌ Item already exists.", delete_after=5)
+        return await ctx.send("â Item already exists.", delete_after=5)
 
     embed = discord.Embed(
         title=name,
-        description=f"💰 Price: ${price}\n📦 Stock: {stock}",
+        description=f"Price: {price}$",
         color=discord.Color.orange()
     )
     if image.lower() != "none":
         embed.set_image(url=image)
+    embed.add_field(name="\u200b", value=f"In stock: {stock}", inline=False)
 
     msg = await ctx.send(embed=embed)
     view = ShopView(name, ctx.author.id)
@@ -263,7 +263,7 @@ async def remove(ctx, name: str):
     await ctx.message.delete()
     item = shop_items.get(name)
     if not item:
-        return await ctx.send("❌ Item not found.", delete_after=5)
+        return await ctx.send("â Item not found.", delete_after=5)
 
     try:
         channel = bot.get_channel(item["channel_id"])
@@ -279,7 +279,7 @@ async def stock(ctx, name: str, amount: int):
     await ctx.message.delete()
     item = shop_items.get(name)
     if not item:
-        return await ctx.send("❌ Item not found.", delete_after=5)
+        return await ctx.send("â Item not found.", delete_after=5)
 
     item["stock"] = amount
 
@@ -294,18 +294,19 @@ async def stock(ctx, name: str, amount: int):
         msg = await channel.fetch_message(item["message_id"])
         embed = discord.Embed(
             title=name,
-            description=f"💰 Price: ${item['price']}\n📦 Stock: {amount}",
+            description=f"Price: {item['price']}$",
             color=discord.Color.orange()
         )
         if item["image"].lower() != "none":
             embed.set_image(url=item["image"])
+        embed.add_field(name="\u200b", value=f"In stock: {amount}", inline=False)
 
         await msg.edit(embed=embed)
     except:
-        await ctx.send("⚠️ Failed to update item display.", delete_after=5)
+        await ctx.send("â ï¸ Failed to update item display.", delete_after=5)
 
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
+    print(f"â Logged in as {bot.user}")
 
 bot.run(os.getenv("BOT_TOKEN"))
