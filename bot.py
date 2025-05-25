@@ -10,7 +10,7 @@ intents.guilds = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Temporary in-memory storage
-shop_items = {}         # name -> {price, stock, message_id}
+shop_items = {}         # name -> {price, stock, message_id, image}
 user_carts = {}         # user_id -> {item_name: quantity}
 
 
@@ -22,7 +22,7 @@ class ShopView(View):
         self.item_name = item_name
         self.add_item(AddToCartButton(item_name))
         self.add_item(RemoveFromCartButton(item_name))
-        self.add_item(CartCountButton(0))  # Will update on interaction
+        self.add_item(CartCountButton(0))  # Placeholder, updates on interaction
 
     async def update_cart_buttons(self, interaction):
         user_id = interaction.user.id
@@ -88,20 +88,22 @@ class CartCountButton(Button):
 @bot.command(name="setup")
 async def setup_command(ctx):
     embed = discord.Embed(
-        title="🛠️ Bot Setup Tutorial",
+        title="🛠️ Shop Bot Setup Guide",
         description=(
-            "**!add [name] [price] [stock]** — Create a shop item\n"
-            "**!remove [name]** — Remove an item\n"
-            "**!stock [name] [amount]** — Update stock\n"
-            "\nClick 🛒 to add to cart, ❌ to remove, 🔵 to see quantity!"
+            "**Commands:**\n"
+            "`!add <name> <image or 'none'> <price> <stock>` — Add a shop item\n"
+            "`!remove <name>` — Remove an item from the shop\n"
+            "`!stock <name> <amount>` — Update an item's stock\n"
+            "`!viewcart` — View your cart total and items\n"
+            "\n🛒 Use buttons to add/remove items to your cart!"
         ),
-        color=discord.Color.green()
+        color=discord.Color.blue()
     )
     await ctx.send(embed=embed)
 
 
 @bot.command(name="add")
-async def add_item(ctx, name: str, price: int, stock: int):
+async def add_item(ctx, name: str, image: str, price: int, stock: int):
     if name in shop_items:
         await ctx.send("❌ Item with this name already exists.")
         return
@@ -111,6 +113,8 @@ async def add_item(ctx, name: str, price: int, stock: int):
         description=f"💰 Price: ${price}\n📦 Stock: {stock}",
         color=discord.Color.orange()
     )
+    if image.lower() != "none":
+        embed.set_image(url=image)
 
     view = ShopView(name)
     shop_msg = await ctx.send(embed=embed, view=view)
@@ -118,6 +122,7 @@ async def add_item(ctx, name: str, price: int, stock: int):
     shop_items[name] = {
         "price": price,
         "stock": stock,
+        "image": image,
         "message_id": shop_msg.id
     }
 
@@ -152,6 +157,31 @@ async def stock_update(ctx, name: str, amount: int):
     await ctx.send(f"✅ Updated stock of `{name}` to {amount}.")
 
 
+@bot.command(name="viewcart")
+async def view_cart(ctx):
+    user_id = ctx.author.id
+    cart = user_carts.get(user_id, {})
+    if not cart:
+        await ctx.send("🛒 Your cart is empty.")
+        return
+
+    total = 0
+    description = ""
+    for item_name, qty in cart.items():
+        item = shop_items.get(item_name)
+        if item:
+            cost = item["price"] * qty
+            total += cost
+            description += f"**{item_name}** — x{qty} (${item['price']} each) = `${cost}`\n"
+
+    embed = discord.Embed(
+        title=f"🛒 {ctx.author.display_name}'s Cart",
+        description=description + f"\n**Total:** `${total}`",
+        color=discord.Color.gold()
+    )
+    await ctx.send(embed=embed)
+
+
 # =============== BOT SETUP ===============
 
 @bot.event
@@ -159,5 +189,4 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user}")
 
 
-# Get your token from environment (e.g., Render)
 bot.run(os.getenv("BOT_TOKEN"))
