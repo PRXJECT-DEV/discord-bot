@@ -1,133 +1,166 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 from discord.ui import Button, View
-import asyncio
-import os
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
-intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+tree = bot.tree
 
-GUILD_ID = 1375574037597650984
-ROLE_ID_HARVESTER = 1375574147064664164
-
-user_orders = {}  # temp user -> current ticket order
-user_totals = {}  # persistent user_id -> total Harvester count
+# Temporary in-memory storage
+shop_items = {}         # name -> {price, stock, message_id}
+user_carts = {}         # user_id -> {item_name: quantity}
 
 
-# 🎮 UI Buttons
-class HarvesterView(View):
-    def __init__(self):
+# =============== VIEWS ===============
+
+class ShopView(View):
+    def __init__(self, item_name):
         super().__init__(timeout=None)
-        self.add_item(HarvesterBuyButton())
-        self.add_item(HarvesterRemoveAllButton())
+        self.item_name = item_name
+
+    async def update_cart_buttons(self, interaction):
+        user_id = interaction.user.id
+        cart = user_carts.get(user_id, {})
+        quantity = cart.get(self.item_name, 0)
+
+        # Update third button's label
+        self.clear_items()
+        self.add_item(AddToCartButton(self.item_name))
+        self.add_item(RemoveFromCartButton(self.item_name))
+        self.add_item(CartCountButton(quantity))
+
+    async def interaction_check(self, interaction):
+        await self.update_cart_buttons(interaction)
+        return True
 
 
-class HarvesterBuyButton(Button):
-    def __init__(self):
-        super().__init__(label="🔪 Buy Harvester", style=discord.ButtonStyle.green)
-
-    async def callback(self, interaction: discord.Interaction):
-        user = interaction.user
-        guild = interaction.guild
-
-        # Prevent duplicate ticket
-        existing = discord.utils.get(guild.channels, name=f"order-{user.name.lower()}")
-        if existing:
-            await interaction.response.send_message("❌ You already have an open ticket.", ephemeral=True)
-            return
-
-        # Create private ticket channel
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            user: discord.PermissionOverwrite(read_messages=True, send_messages=True)
-        }
-
-        ticket = await guild.create_text_channel(f"order-{user.name}", overwrites=overwrites)
-        await ticket.send(f"👋 Hi {user.mention}, how many **Harvester** would you like to buy?")
-        user_orders[user.id] = {"channel": ticket.id, "quantity": 0}
-        await interaction.response.send_message("✅ Ticket created!", ephemeral=True)
-
-
-class HarvesterRemoveAllButton(Button):
-    def __init__(self):
-        super().__init__(label="🗑️ Remove All Harvesters", style=discord.ButtonStyle.danger)
+class AddToCartButton(Button):
+    def __init__(self, item_name):
+        super().__init__(label="🛒 Add to Cart", style=discord.ButtonStyle.success)
+        self.item_name = item_name
 
     async def callback(self, interaction: discord.Interaction):
-        user = interaction.user
-        user_totals[user.id] = 0
+        user_id = interaction.user.id
+        item = shop_items.get(self.item_name)
 
-        # Reset nickname
-        try:
-            await user.edit(nick=None)
-        except discord.Forbidden:
-            await interaction.response.send_message("⚠️ I couldn't reset your nickname (check permissions).", ephemeral=True)
+        if not item:
+            await interaction.response.send_message("❌ Item not found.", ephemeral=True)
             return
 
-        await interaction.response.send_message("🧹 Removed all Harvester stacks!", ephemeral=True)
+        # Stock check
+        cart = user_carts.setdefault(user_id, {})
+        current = cart.get(self.item_name, 0)
+
+        if current >= item["stock"]:
+            await interaction.response.send_message("❌ Not enough stock left.", ephemeral=True)
+            return
+
+        cart[self.item_name] = current + 1
+        await interaction.response.edit_message(view=ShopView(self.item_name))
 
 
-# 📥 Handle ticket input
-@bot.event
-async def on_message(message):
-    if message.author.bot:
+class RemoveFromCartButton(Button):
+    def __init__(self, item_name):
+        super().__init__(label="❌ Remove from Cart", style=discord.ButtonStyle.danger)
+        self.item_name = item_name
+
+    async def callback(self, interaction: discord.Interaction):
+        user_id = interaction.user.id
+        cart = user_carts.get(user_id, {})
+        if self.item_name in cart:
+            cart[self.item_name] = max(0, cart[self.item_name] - 1)
+            if cart[self.item_name] == 0:
+                del cart[self.item_name]
+        await interaction.response.edit_message(view=ShopView(self.item_name))
+
+
+class CartCountButton(Button):
+    def __init__(self, quantity):
+        super().__init__(label=f"In Cart: {quantity}", style=discord.ButtonStyle.primary, disabled=True)
+
+
+# =============== SLASH COMMANDS ===============
+
+@tree.command(name="setup", description="Show tutorial on how to use the bot")
+async def setup_command(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🛠️ Bot Setup Tutorial",
+        description=(
+            "**/add** — Create a shop item\n"
+            "**/remove [name]** — Remove an item\n"
+            "**/stock [name] [amount]** — Update stock\n"
+            "\nClick 🛒 to add to cart, ❌ to remove, 🔵 to see quantity!"
+        ),
+        color=discord.Color.green()
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@tree.command(name="add", description="Add a new shop item")
+@app_commands.describe(name="Name of the item", price="Price", stock="Available stock")
+async def add_item(interaction: discord.Interaction, name: str, price: int, stock: int):
+    if name in shop_items:
+        await interaction.response.send_message("❌ Item with this name already exists.", ephemeral=True)
         return
 
-    uid = message.author.id
-    if message.channel.name.startswith("order-") and uid in user_orders:
-        if user_orders[uid]["quantity"] == 0:
-            try:
-                qty = int(message.content)
-                if qty <= 0:
-                    await message.channel.send("❌ Enter a valid number.")
-                    return
-
-                # Update user's total
-                previous = user_totals.get(uid, 0)
-                new_total = previous + qty
-                user_totals[uid] = new_total
-
-                # Try updating nickname
-                new_nick = f"{message.author.name} | Harvester x{new_total}"
-                try:
-                    await message.author.edit(nick=new_nick)
-                except discord.Forbidden:
-                    await message.channel.send("⚠️ I couldn't change your nickname (check permissions).")
-
-                await message.channel.send(f"✅ Order saved: `{qty}x Harvester`. You now have **Harvester x{new_total}**.")
-                await message.channel.send("⏳ Closing this ticket in 10 seconds...")
-
-                await asyncio.sleep(10)
-                await message.channel.delete()
-                del user_orders[uid]
-            except ValueError:
-                await message.channel.send("❌ Please enter a valid number.")
-    await bot.process_commands(message)
-
-
-# 📦 !shop Command
-@bot.command()
-async def shop(ctx):
     embed = discord.Embed(
-        title="🎃 Harvester Panel",
-        description="Buy or manage your Harvester stack.",
+        title=name,
+        description=f"💰 Price: ${price}\n📦 Stock: {stock}",
         color=discord.Color.orange()
     )
-    embed.add_field(name="🔪 Harvester", value="$10 each (stackable)")
-    embed.set_footer(text="Click a button to continue")
 
-    await ctx.send(embed=embed, view=HarvesterView())
+    view = ShopView(name)
+    shop_msg = await interaction.channel.send(embed=embed, view=view)
+
+    shop_items[name] = {
+        "price": price,
+        "stock": stock,
+        "message_id": shop_msg.id
+    }
+
+    await interaction.response.send_message(f"✅ Added item `{name}` to shop.", ephemeral=True)
 
 
-# ✅ Bot is Ready
+@tree.command(name="remove", description="Remove a shop item by name")
+@app_commands.describe(name="Name of the item to remove")
+async def remove_item(interaction: discord.Interaction, name: str):
+    item = shop_items.get(name)
+    if not item:
+        await interaction.response.send_message("❌ Item not found.", ephemeral=True)
+        return
+
+    try:
+        msg = await interaction.channel.fetch_message(item["message_id"])
+        await msg.delete()
+    except:
+        pass  # Ignore if deleted
+
+    del shop_items[name]
+    await interaction.response.send_message(f"🗑️ Removed `{name}` from shop.", ephemeral=True)
+
+
+@tree.command(name="stock", description="Update stock for a shop item")
+@app_commands.describe(name="Item name", amount="New stock quantity")
+async def stock_update(interaction: discord.Interaction, name: str, amount: int):
+    item = shop_items.get(name)
+    if not item:
+        await interaction.response.send_message("❌ Item not found.", ephemeral=True)
+        return
+
+    item["stock"] = amount
+    await interaction.response.send_message(f"✅ Updated stock of `{name}` to {amount}.", ephemeral=True)
+
+
+# =============== BOT SETUP ===============
+
 @bot.event
 async def on_ready():
-    print(f"✅ Bot is online as {bot.user}")
-    bot.add_view(HarvesterView())  # Persistent buttons
+    await tree.sync()
+    print(f"✅ Logged in as {bot.user}")
 
 
-# 🔐 Run bot
-bot.run(os.getenv("BOT_TOKEN"))
+bot.run("YOUR_BOT_TOKEN")
