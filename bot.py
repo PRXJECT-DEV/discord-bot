@@ -11,6 +11,8 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+OWNER_NAME = "trx.255"
+
 shop_items = {}
 user_carts = {}
 tutorial_msg_id = None
@@ -116,7 +118,7 @@ class CheckoutButton(Button):
             description = ""
             for item_name, qty in cart.items():
                 item = shop_items.get(item_name)
-                if item:
+                if item and qty > 0:
                     cost = item["price"] * qty
                     total += cost
                     description += f"**{item_name}** — x{qty} (${item['price']} each) = `${cost}`\n"
@@ -128,18 +130,22 @@ class CheckoutButton(Button):
             )
 
             close_view = View()
-            close_view.add_item(CloseTicketButton())
+            close_view.add_item(CloseTicketButton(owner_name=OWNER_NAME))
 
             await channel.send(content=f"{user.mention} <@{guild.owner_id}>", embed=embed, view=close_view)
 
         await interaction.response.send_message("✅ Your checkout ticket has been created.", ephemeral=True)
 
 class CloseTicketButton(Button):
-    def __init__(self):
+    def __init__(self, owner_name):
         super().__init__(label="🔒 Close Ticket", style=discord.ButtonStyle.danger)
+        self.owner_name = owner_name
 
     async def callback(self, interaction: discord.Interaction):
-        # Anyone can close the ticket now
+        user_tag = f"{interaction.user.name}.{interaction.user.discriminator}"
+        if user_tag != self.owner_name:
+            await interaction.response.send_message("❌ Only the owner can close tickets.", ephemeral=True)
+            return
         await interaction.response.send_message("🕒 Ticket will close in 5 seconds...", ephemeral=True)
         await asyncio.sleep(5)
         await interaction.channel.delete()
@@ -149,6 +155,7 @@ class CloseTicketButton(Button):
 @bot.command(name="setup")
 async def setup_command(ctx):
     global tutorial_msg_id
+    await ctx.message.delete()
     if tutorial_msg_id:
         try:
             old_msg = await ctx.channel.fetch_message(tutorial_msg_id)
@@ -173,6 +180,7 @@ async def setup_command(ctx):
 
 @bot.command(name="add")
 async def add_item(ctx, name: str, image: str, price: int, stock: int):
+    await ctx.message.delete()
     if name in shop_items:
         await ctx.send("❌ Item with this name already exists.", ephemeral=True)
         return
@@ -200,6 +208,7 @@ async def add_item(ctx, name: str, image: str, price: int, stock: int):
 
 @bot.command(name="remove")
 async def remove_item(ctx, name: str):
+    await ctx.message.delete()
     item = shop_items.get(name)
     if not item:
         await ctx.send("❌ Item not found.", ephemeral=True)
@@ -217,15 +226,19 @@ async def remove_item(ctx, name: str):
 
 @bot.command(name="stock")
 async def stock_update(ctx, name: str, amount: int):
+    await ctx.message.delete()
     item = shop_items.get(name)
     if not item:
         await ctx.send("❌ Item not found.", ephemeral=True)
         return
 
     item["stock"] = amount
+    # Remove or reduce cart items exceeding stock
     for cart in user_carts.values():
-        if name in cart and cart[name] > amount:
-            cart[name] = 0
+        if name in cart:
+            if cart[name] > amount:
+                cart[name] = 0
+                del cart[name]
 
     try:
         channel = bot.get_channel(item["channel_id"])
@@ -246,6 +259,7 @@ async def stock_update(ctx, name: str, amount: int):
 
 @bot.command(name="viewcart")
 async def view_cart(ctx):
+    await ctx.message.delete()
     user_id = ctx.author.id
     cart = user_carts.get(user_id, {})
     if not cart:
@@ -254,9 +268,10 @@ async def view_cart(ctx):
 
     total = 0
     description = ""
+    # Only include items with qty > 0
     for item_name, qty in cart.items():
         if qty <= 0:
-            continue  # skip zero quantities
+            continue
         item = shop_items.get(item_name)
         if item:
             cost = item["price"] * qty
@@ -276,6 +291,7 @@ async def view_cart(ctx):
 
 @bot.command(name="setcheckout")
 async def set_checkout(ctx):
+    await ctx.message.delete()
     embed = discord.Embed(
         title="🛒 Ready to Checkout?",
         description="When you're finished with your cart, click below to open a private ticket.",
@@ -283,14 +299,9 @@ async def set_checkout(ctx):
     )
     view = View()
     view.add_item(CheckoutButton())
-    # Delete the invoking command message for cleanliness:
-    try:
-        await ctx.message.delete()
-    except:
-        pass
     await ctx.send(embed=embed, view=view, ephemeral=True)
 
-# ========== BOT START ==========
+# ========== BOT EVENTS ==========
 
 @bot.event
 async def on_ready():
