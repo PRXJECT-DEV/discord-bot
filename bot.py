@@ -40,7 +40,9 @@ class ShopView(View):
         await interaction.response.edit_message(view=self)
 
     async def interaction_check(self, interaction):
-        await self.update_cart_buttons(interaction)
+        current_cart = user_carts.get(interaction.user.id, {}).get(self.item_name, 0)
+        if any(isinstance(c, CartCountButton) and c.label != f"In Cart: {current_cart}" for c in self.children):
+            await self.update_cart_buttons(interaction)
         return True
 
 
@@ -79,8 +81,6 @@ class RemoveFromCartButton(Button):
         cart = user_carts.get(user_id, {})
         if self.item_name in cart:
             cart[self.item_name] = max(0, cart[self.item_name] - 1)
-            if cart[self.item_name] == 0:
-                del cart[self.item_name]
         view = ShopView(self.item_name, user_id=user_id)
         await interaction.response.edit_message(view=view)
 
@@ -117,13 +117,14 @@ async def setup_command(ctx):
         color=discord.Color.blue()
     )
     msg = await ctx.send(embed=embed)
-    tutorial_msg_id = msg.id
+    if msg:
+        tutorial_msg_id = msg.id
 
 
 @bot.command(name="add")
 async def add_item(ctx, name: str, image: str, price: int, stock: int):
     if name in shop_items:
-        await ctx.send("❌ Item with this name already exists.", ephemeral=True)
+        await ctx.send("❌ Item with this name already exists.")
         return
 
     embed = discord.Embed(
@@ -145,14 +146,14 @@ async def add_item(ctx, name: str, image: str, price: int, stock: int):
         "channel_id": msg.channel.id
     }
 
-    await ctx.send(f"✅ Added item `{name}` to shop.", ephemeral=True)
+    await ctx.send(f"✅ Added item `{name}` to shop.")
 
 
 @bot.command(name="remove")
 async def remove_item(ctx, name: str):
     item = shop_items.get(name)
     if not item:
-        await ctx.send("❌ Item not found.", ephemeral=True)
+        await ctx.send("❌ Item not found.")
         return
 
     try:
@@ -163,17 +164,22 @@ async def remove_item(ctx, name: str):
         pass
 
     del shop_items[name]
-    await ctx.send(f"🗑️ Removed `{name}` from shop.", ephemeral=True)
+    await ctx.send(f"🗑️ Removed `{name}` from shop.")
 
 
 @bot.command(name="stock")
 async def stock_update(ctx, name: str, amount: int):
     item = shop_items.get(name)
     if not item:
-        await ctx.send("❌ Item not found.", ephemeral=True)
+        await ctx.send("❌ Item not found.")
         return
 
     item["stock"] = amount
+
+    # Enforce stock in all user carts
+    for user_id, cart in user_carts.items():
+        if name in cart and cart[name] > amount:
+            cart[name] = 0
 
     try:
         channel = bot.get_channel(item["channel_id"])
@@ -189,10 +195,10 @@ async def stock_update(ctx, name: str, amount: int):
 
         await msg.edit(embed=embed)
     except:
-        await ctx.send("⚠️ Failed to update embed.", ephemeral=True)
+        await ctx.send("⚠️ Failed to update embed.")
         return
 
-    await ctx.send(f"✅ Updated stock of `{name}` to {amount}.", ephemeral=True)
+    await ctx.send(f"✅ Updated stock of `{name}` to {amount}.")
 
 
 @bot.command(name="viewcart")
@@ -200,7 +206,7 @@ async def view_cart(ctx):
     user_id = ctx.author.id
     cart = user_carts.get(user_id, {})
     if not cart:
-        await ctx.send("🛒 Your cart is empty.", ephemeral=True)
+        await ctx.send("🛒 Your cart is empty.")
         return
 
     total = 0
@@ -217,7 +223,7 @@ async def view_cart(ctx):
         description=description + f"\n**Total:** `${total}`",
         color=discord.Color.gold()
     )
-    await ctx.send(embed=embed, ephemeral=True)
+    await ctx.send(embed=embed)
 
 
 # =============== BOT SETUP ===============
