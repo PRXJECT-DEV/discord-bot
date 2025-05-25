@@ -11,8 +11,6 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-OWNER_NAME = "Trx.255"
-
 shop_items = {}
 user_carts = {}
 tutorial_msg_id = None
@@ -42,7 +40,6 @@ class ShopView(View):
         await interaction.response.edit_message(view=self)
 
     async def interaction_check(self, interaction):
-        # Allow anyone to interact but update buttons only for their cart
         await self.update_cart_buttons(interaction)
         return True
 
@@ -142,31 +139,15 @@ class CloseTicketButton(Button):
         super().__init__(label="🔒 Close Ticket", style=discord.ButtonStyle.danger)
 
     async def callback(self, interaction: discord.Interaction):
-        # Use discriminator to check owner - fix for case where name can be different case
-        user_tag = f"{interaction.user.name}.{interaction.user.discriminator}"
-        if user_tag.lower() != OWNER_NAME.lower():
-            await interaction.response.send_message("❌ Only the owner can close tickets.", ephemeral=True)
-            return
+        # Anyone can close the ticket now
         await interaction.response.send_message("🕒 Ticket will close in 5 seconds...", ephemeral=True)
         await asyncio.sleep(5)
         await interaction.channel.delete()
 
-# ========== OWNER CHECK DECORATOR ==========
-
-def is_owner(ctx):
-    # Compare ignoring case to prevent mismatch issues
-    return f"{ctx.author.name}.{ctx.author.discriminator}".lower() == OWNER_NAME.lower()
-
 # ========== COMMANDS ==========
 
 @bot.command(name="setup")
-@commands.check(is_owner)
 async def setup_command(ctx):
-    try:
-        await ctx.message.delete()  # delete the invoking message
-    except:
-        pass
-
     global tutorial_msg_id
     if tutorial_msg_id:
         try:
@@ -191,13 +172,7 @@ async def setup_command(ctx):
     tutorial_msg_id = msg.id
 
 @bot.command(name="add")
-@commands.check(is_owner)
 async def add_item(ctx, name: str, image: str, price: int, stock: int):
-    try:
-        await ctx.message.delete()
-    except:
-        pass
-
     if name in shop_items:
         await ctx.send("❌ Item with this name already exists.", ephemeral=True)
         return
@@ -224,13 +199,7 @@ async def add_item(ctx, name: str, image: str, price: int, stock: int):
     await ctx.send(f"✅ Added item `{name}` to shop.", ephemeral=True)
 
 @bot.command(name="remove")
-@commands.check(is_owner)
 async def remove_item(ctx, name: str):
-    try:
-        await ctx.message.delete()
-    except:
-        pass
-
     item = shop_items.get(name)
     if not item:
         await ctx.send("❌ Item not found.", ephemeral=True)
@@ -247,13 +216,7 @@ async def remove_item(ctx, name: str):
     await ctx.send(f"🗑️ Removed `{name}` from shop.", ephemeral=True)
 
 @bot.command(name="stock")
-@commands.check(is_owner)
 async def stock_update(ctx, name: str, amount: int):
-    try:
-        await ctx.message.delete()
-    except:
-        pass
-
     item = shop_items.get(name)
     if not item:
         await ctx.send("❌ Item not found.", ephemeral=True)
@@ -262,7 +225,7 @@ async def stock_update(ctx, name: str, amount: int):
     item["stock"] = amount
     for cart in user_carts.values():
         if name in cart and cart[name] > amount:
-            del cart[name]  # remove item if more than stock
+            cart[name] = 0
 
     try:
         channel = bot.get_channel(item["channel_id"])
@@ -283,23 +246,17 @@ async def stock_update(ctx, name: str, amount: int):
 
 @bot.command(name="viewcart")
 async def view_cart(ctx):
-    try:
-        await ctx.message.delete()
-    except:
-        pass
-
     user_id = ctx.author.id
     cart = user_carts.get(user_id, {})
-    # Filter items with qty > 0 only
-    filtered_cart = {k: v for k, v in cart.items() if v > 0}
-
-    if not filtered_cart:
+    if not cart:
         await ctx.send("🛒 Your cart is empty.", ephemeral=True)
         return
 
     total = 0
     description = ""
-    for item_name, qty in filtered_cart.items():
+    for item_name, qty in cart.items():
+        if qty <= 0:
+            continue  # skip zero quantities
         item = shop_items.get(item_name)
         if item:
             cost = item["price"] * qty
@@ -318,13 +275,7 @@ async def view_cart(ctx):
     await ctx.send(embed=embed, ephemeral=True)
 
 @bot.command(name="setcheckout")
-@commands.check(is_owner)
 async def set_checkout(ctx):
-    try:
-        await ctx.message.delete()
-    except:
-        pass
-
     embed = discord.Embed(
         title="🛒 Ready to Checkout?",
         description="When you're finished with your cart, click below to open a private ticket.",
@@ -332,23 +283,12 @@ async def set_checkout(ctx):
     )
     view = View()
     view.add_item(CheckoutButton())
+    # Delete the invoking command message for cleanliness:
+    try:
+        await ctx.message.delete()
+    except:
+        pass
     await ctx.send(embed=embed, view=view, ephemeral=True)
-
-# ========== ERROR HANDLING ==========
-
-@setup_command.error
-@add_item.error
-@remove_item.error
-@stock_update.error
-@set_checkout.error
-async def owner_only_error(ctx, error):
-    if isinstance(error, commands.CheckFailure):
-        # delete the command message if possible to reduce duplication
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-        await ctx.send("❌ Only the owner can use this command.", ephemeral=True)
 
 # ========== BOT START ==========
 
