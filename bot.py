@@ -11,8 +11,6 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-OWNER_NAME = "trx.255"
-
 shop_items = {}
 user_carts = {}
 tutorial_msg_id = None
@@ -61,11 +59,11 @@ class AddToCartButton(Button):
         cart = user_carts.setdefault(user_id, {})
         current = cart.get(self.item_name, 0)
 
-        if current >= item["stock"]:
-            await interaction.response.send_message("❌ Not enough stock left.", ephemeral=True)
-            return
+        # Only add if current < stock
+        if current < item["stock"]:
+            cart[self.item_name] = current + 1
+        # else silently ignore add request
 
-        cart[self.item_name] = current + 1
         view = ShopView(self.item_name, user_id=user_id)
         await interaction.response.edit_message(view=view)
 
@@ -77,10 +75,14 @@ class RemoveFromCartButton(Button):
     async def callback(self, interaction: discord.Interaction):
         user_id = interaction.user.id
         cart = user_carts.get(user_id, {})
-        if self.item_name in cart:
-            cart[self.item_name] = max(0, cart[self.item_name] - 1)
+        current_qty = cart.get(self.item_name, 0)
+
+        # Only reduce if > 0, never below 0
+        if current_qty > 0:
+            cart[self.item_name] = current_qty - 1
             if cart[self.item_name] == 0:
                 del cart[self.item_name]
+
         view = ShopView(self.item_name, user_id=user_id)
         await interaction.response.edit_message(view=view)
 
@@ -118,7 +120,7 @@ class CheckoutButton(Button):
             description = ""
             for item_name, qty in cart.items():
                 item = shop_items.get(item_name)
-                if item and qty > 0:
+                if item:
                     cost = item["price"] * qty
                     total += cost
                     description += f"**{item_name}** — x{qty} (${item['price']} each) = `${cost}`\n"
@@ -130,22 +132,18 @@ class CheckoutButton(Button):
             )
 
             close_view = View()
-            close_view.add_item(CloseTicketButton(owner_name=OWNER_NAME))
+            close_view.add_item(CloseTicketButton())
 
             await channel.send(content=f"{user.mention} <@{guild.owner_id}>", embed=embed, view=close_view)
 
         await interaction.response.send_message("✅ Your checkout ticket has been created.", ephemeral=True)
 
 class CloseTicketButton(Button):
-    def __init__(self, owner_name):
+    def __init__(self):
         super().__init__(label="🔒 Close Ticket", style=discord.ButtonStyle.danger)
-        self.owner_name = owner_name
 
     async def callback(self, interaction: discord.Interaction):
-        user_tag = f"{interaction.user.name}.{interaction.user.discriminator}"
-        if user_tag != self.owner_name:
-            await interaction.response.send_message("❌ Only the owner can close tickets.", ephemeral=True)
-            return
+        # No owner-only restriction, anyone can close now
         await interaction.response.send_message("🕒 Ticket will close in 5 seconds...", ephemeral=True)
         await asyncio.sleep(5)
         await interaction.channel.delete()
@@ -233,12 +231,15 @@ async def stock_update(ctx, name: str, amount: int):
         return
 
     item["stock"] = amount
-    # Remove or reduce cart items exceeding stock
+
+    # Adjust all user carts to not exceed new stock amount
     for cart in user_carts.values():
         if name in cart:
             if cart[name] > amount:
-                cart[name] = 0
-                del cart[name]
+                if amount > 0:
+                    cart[name] = amount
+                else:
+                    del cart[name]
 
     try:
         channel = bot.get_channel(item["channel_id"])
@@ -268,12 +269,9 @@ async def view_cart(ctx):
 
     total = 0
     description = ""
-    # Only include items with qty > 0
     for item_name, qty in cart.items():
-        if qty <= 0:
-            continue
         item = shop_items.get(item_name)
-        if item:
+        if item and qty > 0:  # only show items with qty > 0
             cost = item["price"] * qty
             total += cost
             description += f"**{item_name}** — x{qty} (${item['price']} each) = `${cost}`\n"
@@ -301,7 +299,7 @@ async def set_checkout(ctx):
     view.add_item(CheckoutButton())
     await ctx.send(embed=embed, view=view, ephemeral=True)
 
-# ========== BOT EVENTS ==========
+# ========== BOT START ==========
 
 @bot.event
 async def on_ready():
