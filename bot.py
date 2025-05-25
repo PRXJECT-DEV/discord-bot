@@ -1,4 +1,5 @@
 import os
+import asyncio
 import discord
 from discord.ext import commands
 from discord.ui import Button, View
@@ -15,7 +16,6 @@ OWNER_NAME = "Trx.255"
 shop_items = {}
 user_carts = {}
 tutorial_msg_id = None
-
 
 # ========== VIEWS ==========
 
@@ -45,7 +45,6 @@ class ShopView(View):
         await self.update_cart_buttons(interaction)
         return True
 
-
 class AddToCartButton(Button):
     def __init__(self, item_name):
         super().__init__(label="🛒 Add to Cart", style=discord.ButtonStyle.success)
@@ -70,7 +69,6 @@ class AddToCartButton(Button):
         view = ShopView(self.item_name, user_id=user_id)
         await interaction.response.edit_message(view=view)
 
-
 class RemoveFromCartButton(Button):
     def __init__(self, item_name):
         super().__init__(label="❌ Remove from Cart", style=discord.ButtonStyle.danger)
@@ -86,11 +84,9 @@ class RemoveFromCartButton(Button):
         view = ShopView(self.item_name, user_id=user_id)
         await interaction.response.edit_message(view=view)
 
-
 class CartCountButton(Button):
     def __init__(self, quantity):
         super().__init__(label=f"In Cart: {quantity}", style=discord.ButtonStyle.primary, disabled=True)
-
 
 class CheckoutButton(Button):
     def __init__(self):
@@ -140,23 +136,24 @@ class CheckoutButton(Button):
 
         await interaction.response.send_message("✅ Your checkout ticket has been created.", ephemeral=True)
 
-
 class CloseTicketButton(Button):
     def __init__(self, owner_name):
         super().__init__(label="🔒 Close Ticket", style=discord.ButtonStyle.danger)
         self.owner_name = owner_name
 
     async def callback(self, interaction: discord.Interaction):
-        if str(interaction.user) != self.owner_name:
+        user_tag = f"{interaction.user.name}.{interaction.user.discriminator}"
+        if user_tag != self.owner_name:
             await interaction.response.send_message("❌ Only the owner can close tickets.", ephemeral=True)
             return
+        await interaction.response.send_message("🕒 Ticket will close in 5 seconds...", ephemeral=True)
+        await asyncio.sleep(5)
         await interaction.channel.delete()
-
 
 # ========== COMMANDS ==========
 
 def is_owner(ctx):
-    return str(ctx.author) == OWNER_NAME
+    return f"{ctx.author.name}.{ctx.author.discriminator}" == OWNER_NAME
 
 @bot.command(name="setup")
 @commands.check(is_owner)
@@ -183,7 +180,6 @@ async def setup_command(ctx):
     )
     msg = await ctx.send(embed=embed)
     tutorial_msg_id = msg.id
-
 
 @bot.command(name="add")
 @commands.check(is_owner)
@@ -213,7 +209,6 @@ async def add_item(ctx, name: str, image: str, price: int, stock: int):
 
     await ctx.send(f"✅ Added item `{name}` to shop.", ephemeral=True)
 
-
 @bot.command(name="remove")
 @commands.check(is_owner)
 async def remove_item(ctx, name: str):
@@ -231,7 +226,6 @@ async def remove_item(ctx, name: str):
 
     del shop_items[name]
     await ctx.send(f"🗑️ Removed `{name}` from shop.", ephemeral=True)
-
 
 @bot.command(name="stock")
 @commands.check(is_owner)
@@ -263,7 +257,6 @@ async def stock_update(ctx, name: str, amount: int):
 
     await ctx.send(f"✅ Stock of `{name}` updated to {amount}.", ephemeral=True)
 
-
 @bot.command(name="viewcart")
 async def view_cart(ctx):
     user_id = ctx.author.id
@@ -281,13 +274,16 @@ async def view_cart(ctx):
             total += cost
             description += f"**{item_name}** — x{qty} (${item['price']} each) = `${cost}`\n"
 
+    if not description:
+        await ctx.send("🛒 Your cart is empty or all items were removed from the shop.", ephemeral=True)
+        return
+
     embed = discord.Embed(
         title=f"🛒 {ctx.author.display_name}'s Cart",
         description=description + f"\n**Total:** `${total}`",
         color=discord.Color.gold()
     )
     await ctx.send(embed=embed, ephemeral=True)
-
 
 @bot.command(name="setcheckout")
 @commands.check(is_owner)
@@ -301,7 +297,6 @@ async def set_checkout(ctx):
     view.add_item(CheckoutButton())
     await ctx.send(embed=embed, view=view, ephemeral=True)
 
-
 # ========== ERROR HANDLING ==========
 
 @setup_command.error
@@ -313,12 +308,10 @@ async def owner_only_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
         await ctx.send("❌ Only the owner can use this command.", ephemeral=True)
 
-
 # ========== BOT START ==========
 
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
-
 
 bot.run(os.getenv("BOT_TOKEN"))
