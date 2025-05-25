@@ -50,10 +50,11 @@ class AddToCartButton(Button):
                 return
 
             current_qty = cart.get(self.item_name, 0)
-            if current_qty >= item["stock"]:
-                return
+            if current_qty + 1 > item["stock"]:
+                cart[self.item_name] = item["stock"]
+            else:
+                cart[self.item_name] = current_qty + 1
 
-            cart[self.item_name] = current_qty + 1
             await update_shop_message(item, interaction)
 
 class RemoveFromCartButton(Button):
@@ -132,18 +133,29 @@ class CheckoutButton(Button):
                 color=discord.Color.green()
             )
 
-            close_view = View(timeout=None)
-            close_view.add_item(CloseTicketButton())
+            view = View(timeout=None)
+            view.add_item(ContinueCheckoutButton())
+            view.add_item(CancelCheckoutButton())
 
-            await channel.send(content=f"{user.mention} <@{guild.owner_id}>", embed=embed, view=close_view)
+            await channel.send(content=f"{user.mention} <@{guild.owner_id}>", embed=embed, view=view)
             await interaction.followup.send(f"✅ Checkout ticket created! Check {channel.mention}", ephemeral=True)
 
-class CloseTicketButton(Button):
+class ContinueCheckoutButton(Button):
     def __init__(self):
-        super().__init__(label="🔒 Close Ticket", style=discord.ButtonStyle.danger)
+        super().__init__(label="✅ Continue", style=discord.ButtonStyle.success)
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_message("🕒 Closing ticket in 5 seconds...", ephemeral=True)
+        await interaction.response.defer()
+        msg = await interaction.channel.history(limit=10).find(lambda m: m.author == interaction.client.user and m.components)
+        if msg:
+            await msg.edit(content="✅ Thank you! Please wait shortly for an admin to look at your request.", view=None)
+
+class CancelCheckoutButton(Button):
+    def __init__(self):
+        super().__init__(label="🔙 Back", style=discord.ButtonStyle.secondary)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_message("🕒 Canceling and deleting ticket in 5 seconds...", ephemeral=True)
         await asyncio.sleep(5)
         await interaction.channel.delete()
 
@@ -186,7 +198,6 @@ async def setup(ctx):
             "`!add <name> <image or none> <price> <stock>`\n"
             "`!remove <name>`\n"
             "`!stock <name> <amount>`\n"
-            "`!viewcart`\n"
             "`!setcheckout`"
         ),
         color=discord.Color.blue()
@@ -289,33 +300,6 @@ async def stock(ctx, name: str, amount: int):
         await msg.edit(embed=embed)
     except:
         await ctx.send("⚠️ Failed to update item display.", delete_after=5)
-
-@bot.command(name="viewcart")
-async def viewcart(ctx):
-    await ctx.message.delete()
-
-    cart = user_carts.get(ctx.author.id, {})
-    filtered_cart = {k: v for k, v in cart.items() if v > 0}
-
-    if not filtered_cart:
-        return await ctx.send("🛒 Your cart is empty.", delete_after=5)
-
-    total = 0
-    desc = ""
-    for item_name, qty in filtered_cart.items():
-        item = shop_items.get(item_name)
-        if item:
-            cost = item["price"] * qty
-            total += cost
-            desc += f"**{item_name}** — x{qty} (${item['price']} each) = `${cost}`\n"
-
-    embed = discord.Embed(
-        title=f"🛒 {ctx.author.display_name}'s Cart",
-        description=desc + f"\n**Total:** `${total}`",
-        color=discord.Color.gold()
-    )
-
-    await ctx.send(embed=embed, delete_after=15)
 
 @bot.event
 async def on_ready():
