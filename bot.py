@@ -155,4 +155,4 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user}")
 
 
-bot.run("YOUR_BOT_TOKEN")
+bot.run(os.getenv("BOT_TOKEN"))
