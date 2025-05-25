@@ -9,30 +9,35 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Temporary in-memory storage
-shop_items = {}         # name -> {price, stock, message_id, image}
+# In-memory storage
+shop_items = {}         # name -> {price, stock, message_id, image, channel_id}
 user_carts = {}         # user_id -> {item_name: quantity}
+tutorial_msg_id = None  # Store the ID of the current tutorial message
 
 
 # =============== VIEWS ===============
 
 class ShopView(View):
-    def __init__(self, item_name):
+    def __init__(self, item_name, user_id=None):
         super().__init__(timeout=None)
         self.item_name = item_name
-        self.add_item(AddToCartButton(item_name))
-        self.add_item(RemoveFromCartButton(item_name))
-        self.add_item(CartCountButton(0))  # Placeholder, updates on interaction
+        self.user_id = user_id
+        self.add_buttons()
 
-    async def update_cart_buttons(self, interaction):
-        user_id = interaction.user.id
-        cart = user_carts.get(user_id, {})
-        quantity = cart.get(self.item_name, 0)
-
+    def add_buttons(self):
         self.clear_items()
         self.add_item(AddToCartButton(self.item_name))
         self.add_item(RemoveFromCartButton(self.item_name))
+        quantity = 0
+        if self.user_id:
+            cart = user_carts.get(self.user_id, {})
+            quantity = cart.get(self.item_name, 0)
         self.add_item(CartCountButton(quantity))
+
+    async def update_cart_buttons(self, interaction):
+        self.user_id = interaction.user.id
+        self.add_buttons()
+        await interaction.response.edit_message(view=self)
 
     async def interaction_check(self, interaction):
         await self.update_cart_buttons(interaction)
@@ -60,7 +65,8 @@ class AddToCartButton(Button):
             return
 
         cart[self.item_name] = current + 1
-        await interaction.response.edit_message(view=ShopView(self.item_name))
+        view = ShopView(self.item_name, user_id=user_id)
+        await interaction.response.edit_message(view=view)
 
 
 class RemoveFromCartButton(Button):
@@ -75,7 +81,8 @@ class RemoveFromCartButton(Button):
             cart[self.item_name] = max(0, cart[self.item_name] - 1)
             if cart[self.item_name] == 0:
                 del cart[self.item_name]
-        await interaction.response.edit_message(view=ShopView(self.item_name))
+        view = ShopView(self.item_name, user_id=user_id)
+        await interaction.response.edit_message(view=view)
 
 
 class CartCountButton(Button):
@@ -87,6 +94,16 @@ class CartCountButton(Button):
 
 @bot.command(name="setup")
 async def setup_command(ctx):
+    global tutorial_msg_id
+
+    # Delete old tutorial if it exists
+    if tutorial_msg_id:
+        try:
+            old_msg = await ctx.channel.fetch_message(tutorial_msg_id)
+            await old_msg.delete()
+        except:
+            pass
+
     embed = discord.Embed(
         title="🛠️ Shop Bot Setup Guide",
         description=(
@@ -99,13 +116,14 @@ async def setup_command(ctx):
         ),
         color=discord.Color.blue()
     )
-    await ctx.send(embed=embed)
+    msg = await ctx.send(embed=embed)
+    tutorial_msg_id = msg.id
 
 
 @bot.command(name="add")
 async def add_item(ctx, name: str, image: str, price: int, stock: int):
     if name in shop_items:
-        await ctx.send("❌ Item with this name already exists.")
+        await ctx.send("❌ Item with this name already exists.", ephemeral=True)
         return
 
     embed = discord.Embed(
@@ -117,44 +135,64 @@ async def add_item(ctx, name: str, image: str, price: int, stock: int):
         embed.set_image(url=image)
 
     view = ShopView(name)
-    shop_msg = await ctx.send(embed=embed, view=view)
+    msg = await ctx.send(embed=embed, view=view)
 
     shop_items[name] = {
         "price": price,
         "stock": stock,
         "image": image,
-        "message_id": shop_msg.id
+        "message_id": msg.id,
+        "channel_id": msg.channel.id
     }
 
-    await ctx.send(f"✅ Added item `{name}` to shop.")
+    await ctx.send(f"✅ Added item `{name}` to shop.", ephemeral=True)
 
 
 @bot.command(name="remove")
 async def remove_item(ctx, name: str):
     item = shop_items.get(name)
     if not item:
-        await ctx.send("❌ Item not found.")
+        await ctx.send("❌ Item not found.", ephemeral=True)
         return
 
     try:
-        msg = await ctx.channel.fetch_message(item["message_id"])
+        channel = bot.get_channel(item["channel_id"])
+        msg = await channel.fetch_message(item["message_id"])
         await msg.delete()
     except:
-        pass  # Ignore if already deleted
+        pass
 
     del shop_items[name]
-    await ctx.send(f"🗑️ Removed `{name}` from shop.")
+    await ctx.send(f"🗑️ Removed `{name}` from shop.", ephemeral=True)
 
 
 @bot.command(name="stock")
 async def stock_update(ctx, name: str, amount: int):
     item = shop_items.get(name)
     if not item:
-        await ctx.send("❌ Item not found.")
+        await ctx.send("❌ Item not found.", ephemeral=True)
         return
 
     item["stock"] = amount
-    await ctx.send(f"✅ Updated stock of `{name}` to {amount}.")
+
+    try:
+        channel = bot.get_channel(item["channel_id"])
+        msg = await channel.fetch_message(item["message_id"])
+
+        embed = discord.Embed(
+            title=name,
+            description=f"💰 Price: ${item['price']}\n📦 Stock: {amount}",
+            color=discord.Color.orange()
+        )
+        if item["image"].lower() != "none":
+            embed.set_image(url=item["image"])
+
+        await msg.edit(embed=embed)
+    except:
+        await ctx.send("⚠️ Failed to update embed.", ephemeral=True)
+        return
+
+    await ctx.send(f"✅ Updated stock of `{name}` to {amount}.", ephemeral=True)
 
 
 @bot.command(name="viewcart")
@@ -162,7 +200,7 @@ async def view_cart(ctx):
     user_id = ctx.author.id
     cart = user_carts.get(user_id, {})
     if not cart:
-        await ctx.send("🛒 Your cart is empty.")
+        await ctx.send("🛒 Your cart is empty.", ephemeral=True)
         return
 
     total = 0
@@ -179,7 +217,7 @@ async def view_cart(ctx):
         description=description + f"\n**Total:** `${total}`",
         color=discord.Color.gold()
     )
-    await ctx.send(embed=embed)
+    await ctx.send(embed=embed, ephemeral=True)
 
 
 # =============== BOT SETUP ===============
