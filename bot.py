@@ -1,3 +1,4 @@
+import os
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -5,29 +6,22 @@ from discord import app_commands
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Sync command tree to the guild
+# Optional: limit to a test guild for instant slash updates
+GUILD_ID = 1375574037597650984  # replace with your guild/server ID
+
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    try:
+        synced = await bot.tree.sync(guild=discord.Object(id=GUILD_ID))  # Fast for testing
+        print(f"Synced {len(synced)} commands to guild {GUILD_ID}")
+    except Exception as e:
+        print(f"Error syncing commands: {e}")
+    print(f"Logged in as {bot.user}")
 
-# Example slash command: /setup
-@bot.tree.command(name="setup", description="Set up the bot with a short tutorial.")
+# Slash command: /setup
+@bot.tree.command(name="setup", description="Show how to use the bot.")
 async def setup_command(interaction: discord.Interaction):
-    await interaction.response.send_message("Welcome to the bot! Here's how to use it...", ephemeral=True)
+    await interaction.response.send_message("Thanks for using this bot! Here's how to get started.", ephemeral=True)
 
-# Example slash command: /add
-@bot.tree.command(name="add", description="Create a new shop prompt.")
-@app_commands.describe(
-    name="Name of the product",
-    price="Price of the item (e.g. 0.69)",
-    stock="Stock count for the item"
-)
-async def add_command(interaction: discord.Interaction, name: str, price: float, stock: int):
-    embed = discord.Embed(
-        title=name,
-        description=f"Price: ${price:.2f}\nStock: {stock}",
-        color=discord.Color.green()
-    )
-    embed.set_footer(text=f"Requested by {interaction.user.display_name}")
-    await interaction.response.send_message(embed=embed)
+# Run the bot
+bot.run(os.getenv("BOT_TOKEN"))
