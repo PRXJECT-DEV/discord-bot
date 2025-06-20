@@ -13,7 +13,7 @@ tree = bot.tree
 @tree.command(name="create_script", description="Generate a Roblox script config and get it as DM")
 @app_commands.describe(
     username="Your Roblox username (not display name ⚠️)",
-    github_url="GitHub raw HTTPS link (no loadstring ⚠️)",
+    github_url="GitHub raw HTTPS link (no loadstring added ⚠️)",
     webhook_url="Your Discord webhook URL"
 )
 async def create_script(interaction: discord.Interaction, username: str, github_url: str, webhook_url: str):
